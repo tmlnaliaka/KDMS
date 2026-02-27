@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+httpx
+google-generativeai
+apscheduler
+africastalking
+python-dotenv
+aiosqlite
+pydantic
