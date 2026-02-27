@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet'
+import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet.heat'
 
 const SEVERITY_COLOR = {
     High: '#ef4444',
@@ -32,6 +34,31 @@ function FitBounds({ disasters }) {
             }
         }
     }, [disasters])
+    return null
+}
+
+function HeatmapLayer({ disasters }) {
+    const map = useMap()
+    useEffect(() => {
+        if (!disasters.length) return
+
+        // Intensity mapping based on severity
+        const points = disasters
+            .filter(d => d.lat && d.lng)
+            .map(d => {
+                const intensity = d.severity === 'High' ? 1.0 : d.severity === 'Medium' ? 0.6 : 0.3
+                return [d.lat, d.lng, intensity]
+            })
+
+        const heat = L.heatLayer(points, {
+            radius: 35,
+            blur: 25,
+            maxZoom: 9,
+            gradient: { 0.2: '#10b981', 0.6: '#f59e0b', 1.0: '#ef4444' } // matches Low, Med, High colors
+        }).addTo(map)
+
+        return () => { map.removeLayer(heat) }
+    }, [map, disasters])
     return null
 }
 
@@ -95,15 +122,18 @@ export default function MapView({ api }) {
                         url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
                         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
                     />
+
+                    <HeatmapLayer disasters={disasters} />
+
                     {disasters.filter(d => d.lat && d.lng).map(d => (
                         <CircleMarker
                             key={d.id}
                             center={[d.lat, d.lng]}
-                            radius={d.severity === 'High' ? 14 : d.severity === 'Medium' ? 10 : 7}
+                            radius={d.severity === 'High' ? 7 : d.severity === 'Medium' ? 5 : 4}
                             pathOptions={{
-                                color: SEVERITY_COLOR[d.severity] || '#f59e0b',
+                                color: '#ffffff', // white border to stand out from heatmap
                                 fillColor: SEVERITY_COLOR[d.severity] || '#f59e0b',
-                                fillOpacity: 0.75,
+                                fillOpacity: 0.9,
                                 weight: 2,
                             }}
                             eventHandlers={{ click: () => setSelected(d) }}
@@ -125,6 +155,10 @@ export default function MapView({ api }) {
                                     <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>
                                         {d.county_name && <span>📍 {d.county_name} · </span>}
                                         <span style={{ color: SEVERITY_COLOR[d.severity] }}>⚠ {d.severity}</span>
+                                    </div>
+                                    <div style={{ fontSize: 11, color: '#64748b', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
+                                        <span>⏰ {d.reported_at ? new Date(d.reported_at).toLocaleString() : 'Just now'}</span>
+                                        <span>Status: {d.status}</span>
                                     </div>
                                     {d.affected_people > 0 && (
                                         <div style={{ fontSize: 13, marginBottom: 6, color: '#CBD5E1' }}>
