@@ -4,31 +4,37 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+env/
+venv/
+.venv/
 *.egg-info/
 dist/
 build/
-.eggs/
-*.whl
-.venv/
-venv/
-env/
 
-# Secrets & DB
+# Environment Variables — NEVER commit keys
 .env
+.env.*
+!.env.example
+
+# Database
 *.db
 *.sqlite3
 
-# Node
+# Logs
+*.log
+error_log.txt
+err.log
+
+# Node / React
 node_modules/
 dist/
-.cache/
-frontend/dist/
+.next/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# IDE
-.vscode/
-.idea/
-*.swp
+# Test scripts
+backend/test_gemini.py
+backend/test_gemini2.py
+backend/error_log.txt

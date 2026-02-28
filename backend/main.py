@@ -16,7 +16,7 @@ from database import (
     get_refuges_for_county, fetchone, fetchall, execute, update_county_risk
 )
 from gemini_service import (
-    generate_72hr_prediction, generate_sms_alert, generate_national_report
+    generate_72hr_prediction, generate_sms_alert, generate_national_report, get_admin_chat_response
 )
 from sms_service import send_bulk_sms
 from data_sources import fetch_forecast
@@ -263,6 +263,42 @@ async def resolve_disaster(disaster_id: int):
     )
     return {"success": True, "disaster_id": disaster_id}
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage]
+
+@app.post("/api/chat")
+async def admin_chat(req: ChatRequest):
+    """Gemini-powered chatbot for system administrators."""
+    msgs = [{"role": m.role, "content": m.content} for m in req.messages]
+    
+    # Gather some basic system context to inject
+    stats = await get_stats()
+    reply = await get_admin_chat_response(msgs, stats)
+    return {"reply": reply}
+
+@app.get("/api/warnings")
+async def early_warnings():
+    """Returns predictive early warnings with precise timelines."""
+    # Reutilizes the 72hr prediction engine which incorporates weather API data
+    pred = await predict()
+    
+    # Format predictions specifically for the UI warnings ticker
+    warnings = []
+    for p in pred.get("predictions", []):
+        if p.get("probability") in ["High", "Medium"]:
+            warnings.append({
+                "id": f"warn_{p['county']}_{p['threat']}",
+                "county": p["county"],
+                "threat": p["threat"],
+                "timeline": p["estimated_time"],
+                "severity": p["probability"],
+                "action": p["recommended_action"]
+            })
+            
+    return {"warnings": warnings, "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/stats")
 async def get_stats():

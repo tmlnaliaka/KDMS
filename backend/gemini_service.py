@@ -7,11 +7,14 @@ import json
 import re
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from dotenv import load_dotenv
+from dotenv import load_dotenv, dotenv_values
 
-load_dotenv()
+load_dotenv(override=True)
+_env_vars = dotenv_values(".env")
 
-GEMINI_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+# Gemini 1.5 Flash - loaded on module initialization
+GEMINI_KEY = _env_vars.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY", "")
+GEMINI_KEY = GEMINI_KEY.strip()
 
 _model = None
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -23,7 +26,7 @@ def _init_model():
         import google.generativeai as genai
         genai.configure(api_key=GEMINI_KEY)
         _model = genai.GenerativeModel(
-            "gemini-1.5-flash",
+            "gemini-2.0-flash",
             generation_config={"temperature": 0.3, "max_output_tokens": 1024},
         )
     return _model
@@ -43,8 +46,21 @@ async def _generate(prompt: str) -> str:
     if not model:
         raise RuntimeError("Gemini API key not configured")
     loop = asyncio.get_event_loop()
-    resp = await loop.run_in_executor(_executor, model.generate_content, prompt)
-    return resp.text
+    last_ex = None
+    wait_times = [5, 15, 30]  # Progressive backoff for free-tier RPM limits
+    for attempt in range(3):
+        try:
+            resp = await loop.run_in_executor(_executor, model.generate_content, prompt)
+            return resp.text
+        except Exception as e:
+            last_ex = e
+            if "429" in str(e) or "quota" in str(e).lower() or "rate" in str(e).lower():
+                wait = wait_times[attempt]
+                print(f"[Gemini] Rate limited. Waiting {wait}s before retry {attempt+1}/3...")
+                await asyncio.sleep(wait)
+            else:
+                raise  # Non-retriable error, fail immediately
+    raise last_ex  # All retries exhausted
 
 
 # ── Job 1: County Risk Scoring ───────────────────────────────────────────────
@@ -269,3 +285,33 @@ workers are currently deployed. {stats.get('high_risk_counties', 0)} counties ar
 ## 72-Hour Outlook
 Continued monitoring of all 47 counties via automated data collection (every 30 minutes).
 Connect Gemini API key for AI-powered predictive analysis and real-time threat assessment."""
+
+# ── Job 5: Administrator Support Chatbot ─────────────────────────────────────
+
+async def get_admin_chat_response(messages: list[dict], stats: dict) -> str:
+    """
+    Provide context-aware support for system administrators.
+    messages format: [{"role": "user"|"assistant", "content": "..."}]
+    """
+    try:
+        # Build conversation history
+        history = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in messages])
+        
+        prompt = f"""You are the KDMS (Kenya Disaster Management System) AI Assistant.
+You are helping the system administrator navigate the dashboard and manage disasters.
+
+Current System Context:
+- Active disasters: {stats.get('active_disasters')}
+- Total affected: {stats.get('total_affected', 0):,}
+- High risk counties: {stats.get('high_risk_counties')}
+- Workers: {stats.get('deployed_workers')} deployed, {stats.get('available_workers')} available
+
+Conversation History:
+{history}
+
+Respond to the final USER message as the KDMS assistant. Be helpful, concise, and professional. You can guide them to check the "Live Map", "Risk Scores", "Workers", or "Alert Console" tabs depending on their question. Use markdown formatting sparingly. Do not hallucinate statistics outside of the context provided."""
+        
+        return await _generate(prompt)
+    except Exception as e:
+        print(f"[Gemini] Chatbot fallback: {e}")
+        return "I am currently running in offline mode. Please verify the Gemini API key in the `.env` file to enable full chat support."

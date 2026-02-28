@@ -7,6 +7,7 @@ import WorkerPanel from './WorkerPanel'
 import AlertConsole from './AlertConsole'
 import AIReport from './AIReport'
 import MotionBackground from './MotionBackground'
+import SupportChat from './SupportChat'
 import './index.css'
 
 const API = 'http://localhost:8000'
@@ -94,6 +95,54 @@ function Topbar({ stats }) {
   )
 }
 
+function WarningsTicker({ api }) {
+  const [warnings, setWarnings] = useState([])
+
+  useEffect(() => {
+    fetch(`${api}/api/warnings`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.warnings && data.warnings.length > 0) {
+          setWarnings(data.warnings)
+        }
+      })
+      .catch(e => console.error("Could not fetch early warnings:", e))
+  }, [api])
+
+  if (warnings.length === 0) {
+    return (
+      <div className="warnings-ticker" style={{ borderColor: 'rgba(59, 130, 246, 0.2)', background: 'rgba(59, 130, 246, 0.05)' }}>
+        <div className="ticker-icon" style={{ background: 'rgba(59, 130, 246, 0.2)', color: '#3b82f6' }}>SYSTEM NOMINAL</div>
+        <div className="ticker-content">
+          <div className="ticker-item" style={{ color: 'var(--text-secondary)' }}>
+            ✓ No immediate high-risk weather threats detected for the next 72 hours. KDMS continuous monitoring is active.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="warnings-ticker">
+      <div className="ticker-icon">AI EARLY WARNINGS</div>
+      <div className="ticker-content">
+        <div className="ticker-track">
+          {/* Double the warnings array to create a seamless infinite scroll loop */}
+          {[...warnings, ...warnings].map((w, i) => (
+            <div key={`${w.id}-${i}`} className="ticker-item">
+              <span style={{ color: w.severity === 'High' ? 'var(--accent-red)' : 'var(--accent-amber)', fontWeight: 600 }}>
+                {w.county} ({w.threat})
+              </span>
+              <span style={{ color: 'var(--text-secondary)' }}>— {w.action}</span>
+              <span style={{ color: 'var(--accent-cyan)', fontSize: 11, fontWeight: 700 }}>[{w.timeline}]</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
   const [stats, setStats] = useState(null)
 
@@ -115,6 +164,7 @@ export default function App() {
         <Sidebar stats={stats} />
         <div className="main-content">
           <Topbar stats={stats} />
+          <WarningsTicker api={API} />
           <main className="page">
             <Routes>
               <Route path="/" element={<MapView api={API} />} />
@@ -125,6 +175,7 @@ export default function App() {
             </Routes>
           </main>
         </div>
+        <SupportChat api={API} />
       </div>
     </BrowserRouter>
   )

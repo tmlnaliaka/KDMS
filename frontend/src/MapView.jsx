@@ -38,6 +38,7 @@ function FitBounds({ disasters }) {
 
 export default function MapView({ api }) {
     const [disasters, setDisasters] = useState([])
+    const [countyRisks, setCountyRisks] = useState([])
     const [selected, setSelected] = useState(null)
     const [loading, setLoading] = useState(true)
     const [toast, setToast] = useState(null)
@@ -50,47 +51,70 @@ export default function MapView({ api }) {
             .then(data => setGeoData(data))
             .catch(e => console.error('Failed to load county paths', e))
 
+        // Fetch active disasters
         fetch(`${api}/disasters?status=active`)
             .then(r => r.json())
             .then(data => { setDisasters(data); setLoading(false) })
             .catch(() => setLoading(false))
 
-        const t = setInterval(() =>
+        // Fetch complete county risks for choropleth mapping
+        fetch(`${api}/counties/risk`)
+            .then(r => r.json())
+            .then(data => setCountyRisks(data))
+            .catch(e => console.error('Failed to load county risks', e))
+
+        const t = setInterval(() => {
             fetch(`${api}/disasters?status=active`)
                 .then(r => r.json())
                 .then(setDisasters)
-                .catch(() => { }), 60000)
+                .catch(() => { })
+            fetch(`${api}/counties/risk`)
+                .then(r => r.json())
+                .then(setCountyRisks)
+                .catch(() => { })
+        }, 60000)
         return () => clearInterval(t)
     }, [api])
 
-    // Match geometric counties to disasters
+    // Match geometric counties to disasters and risks to create Choropleth
     const getCountyStyle = (feature) => {
-        const countyName = feature.properties.ADM1_EN // HDX OCHA property for Admin 1 (County)
+        const countyName = feature.properties.shapeName || feature.properties.ADM1_EN
+
+        // Match Risk Score
+        const countyRisk = countyRisks.find(c =>
+            c.name && countyName &&
+            (c.name.toLowerCase().includes(countyName.toLowerCase()) ||
+                countyName.toLowerCase().includes(c.name.toLowerCase()))
+        )
+        const score = countyRisk ? countyRisk.risk_score : 0
+
+        // Determine Color based on Risk Score (0-100) to resemble a beautiful Choropleth Heat Map
+        let fillColor = '#0288d1' // Default Safe (Dark Blue)
+        if (score >= 80) fillColor = '#b91c1c' // Critical - Dark Red
+        else if (score >= 60) fillColor = '#ff5722' // High - Orange Red
+        else if (score >= 40) fillColor = '#ff9800' // Medium - Orange
+        else if (score >= 20) fillColor = '#ffeb3b' // Low - Yellow
+        else if (score > 10) fillColor = '#4fc3f7' // Minimal - Light Blue
 
         // Find if this county has an active disaster
-        // We do a loose string match because API county names might differ slightly from GeoJSON bounds
         const activeDisaster = disasters.find(d =>
             d.county_name && countyName &&
             (d.county_name.toLowerCase().includes(countyName.toLowerCase()) ||
                 countyName.toLowerCase().includes(d.county_name.toLowerCase()))
         )
 
-        if (activeDisaster) {
-            return {
-                fillColor: SEVERITY_COLOR[activeDisaster.severity] || '#f59e0b',
-                weight: 1,
-                opacity: 0.8,
-                color: SEVERITY_COLOR[activeDisaster.severity] || '#f59e0b',
-                fillOpacity: activeDisaster.severity === 'High' ? 0.35 : 0.2
-            }
-        }
+        // Pulsating motion to signify disaster intensity (covered area motion requirement)
+        const severityClass = activeDisaster
+            ? (activeDisaster.severity === 'High' ? 'pulse-high' : activeDisaster.severity === 'Medium' ? 'pulse-medium' : 'pulse-low')
+            : ''
 
-        // Default invisible style for unaffected counties
         return {
-            fillColor: 'transparent',
-            weight: 0,
-            opacity: 0,
-            fillOpacity: 0
+            fillColor: fillColor,
+            weight: 1,
+            opacity: 0.8,
+            color: '#1e293b', // Subdued dark map border
+            fillOpacity: 0.75, // Solid heat map fill
+            className: `heatmap-polygon ${severityClass}`
         }
     }
 
@@ -107,21 +131,33 @@ export default function MapView({ api }) {
 
     return (
         <div style={{ position: 'relative' }}>
-            {/* Legend */}
+            {/* Choropleth Legend */}
             <div style={{
                 display: 'flex', gap: 16, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center'
             }}>
-                {['High', 'Medium', 'Low'].map(s => (
-                    <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', marginRight: 4 }}>
+                    Risk Map:
+                </div>
+                {[
+                    { label: 'Critical (80+)', color: '#b91c1c' },
+                    { label: 'High (60+)', color: '#ff5722' },
+                    { label: 'Medium (40+)', color: '#ff9800' },
+                    { label: 'Low (20+)', color: '#ffeb3b' },
+                    { label: 'Minimal', color: '#4fc3f7' },
+                    { label: 'Safe', color: '#0288d1' }
+                ].map(s => (
+                    <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
                         <div style={{
-                            width: 12, height: 12, borderRadius: '50%',
-                            background: SEVERITY_COLOR[s], boxShadow: `0 0 6px ${SEVERITY_COLOR[s]}`
+                            width: 14, height: 14, borderRadius: 3,
+                            background: s.color, border: '1px solid rgba(255,255,255,0.1)',
+                            boxShadow: `0 0 6px ${s.color}`
                         }} />
-                        <span style={{ color: 'var(--text-secondary)' }}>{s} Severity</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{s.label}</span>
                     </div>
                 ))}
-                <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>
-                    {loading ? '⏳ Loading...' : `${disasters.length} active disaster${disasters.length !== 1 ? 's' : ''}`}
+
+                <div style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--text-muted)' }}>
+                    {loading ? '⏳ Updating Matrix...' : `${disasters.length} active disaster${disasters.length !== 1 ? 's' : ''}`}
                 </div>
             </div>
 
@@ -136,13 +172,12 @@ export default function MapView({ api }) {
                         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
                     />
 
-                    {/* Full-county Heatmap Fill */}
-                    {geoData && (
+                    {/* Regional Choropleth Heatmap Fill */}
+                    {geoData && countyRisks.length > 0 && (
                         <GeoJSON
                             data={geoData}
                             style={getCountyStyle}
-                            // Re-render when disasters change to update colors
-                            key={JSON.stringify(disasters.map(d => d.id))}
+                            key={JSON.stringify(countyRisks.map(c => c.risk_score)) + JSON.stringify(disasters.map(d => d.id))}
                         />
                     )}
 
